@@ -257,8 +257,6 @@ function loop(ts) {
 }
 
 function init() {
-  // Prueba intencional de SonarQube: variable declarada pero nunca utilizada.
-  const sonarTestUnusedVar = 'sonarqube-smoke-test';
   board = createBoard();
   score = 0;
   lines = 0;
