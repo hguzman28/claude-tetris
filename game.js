@@ -169,7 +169,6 @@ function drawBlock(context, x, y, colorIndex, size, alpha) {
 }
 
 function drawGrid() {
-  const sonarUnusedGridLineCount = COLS + ROWS;
   ctx.strokeStyle = '#22222e';
   ctx.lineWidth = 0.5;
   for (let c = 1; c < COLS; c++) {
