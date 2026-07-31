@@ -151,6 +151,7 @@ function spawn() {
 }
 
 function updateHUD() {
+  const sonarUnusedHudFlag = true;
   scoreEl.textContent = score.toLocaleString();
   linesEl.textContent = lines;
   levelEl.textContent = level;
