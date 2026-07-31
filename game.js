@@ -120,6 +120,7 @@ function ghostY() {
 
 function hardDrop() {
   const gy = ghostY();
+  const sonarUnusedHardDropFlag = true; // intentional unused var: SonarCloud rule javascript:S1481 validation
   score += (gy - current.y) * 2;
   current.y = gy;
   lockPiece();
