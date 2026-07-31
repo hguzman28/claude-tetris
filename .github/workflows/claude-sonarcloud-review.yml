@@ -8,7 +8,14 @@ name: Claude SonarCloud Analysis
 # (post-rebrand from "SonarCloud" to "SonarQube Cloud") and check name
 # 'SonarCloud Code Analysis'. Don't confuse it with the separate
 # 'github-advanced-security' check named "SonarCloud" (code scanning/SARIF results) —
-# that one is unrelated to the Quality Gate and always ran green in our test PR.
+# that one is unrelated to the Quality Gate and always ran green in our test PRs.
+#
+# NOTE: anthropics/claude-code-action@v1 does not support being invoked directly
+# from a check_run event ("Unsupported event type: check_run" — confirmed by a
+# live failed run on this repo). Instead of calling it here, this workflow posts
+# an @claude PR comment with the analysis instructions, which re-triggers the
+# existing claude.yml workflow (on: issue_comment containing '@claude'). That
+# workflow already knows how to resolve full PR context.
 on:
   check_run:
     types: [completed]
@@ -22,57 +29,47 @@ jobs:
 
     runs-on: ubuntu-latest
     permissions:
-      contents: read
       pull-requests: write
-      checks: read
-      issues: read
-      id-token: write
+      issues: write
 
     steps:
-      - name: Checkout repository at the analyzed commit
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.check_run.head_sha }}
-          fetch-depth: 1
+      - name: Post @claude analysis request on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.check_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.check_run.head_sha }}
+          CHECK_RUN_ID: ${{ github.event.check_run.id }}
+        run: |
+          cat > /tmp/sonar-analysis-request.md <<EOF
+          @claude El SonarQube Cloud Quality Gate falló en este PR (commit ${HEAD_SHA}).
 
-      - name: Run Claude SonarCloud analysis
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Analysis-only: Claude must never edit/write files in this workflow.
-          # Any fix has to go through a human-triggered @claude follow-up instead.
-          claude_args: '--disallowed-tools Edit,Write,NotebookEdit'
-          prompt: |
-            El SonarCloud Quality Gate falló en el PR #${{ github.event.check_run.pull_requests[0].number }}
-            del repo ${{ github.repository }} (commit ${{ github.event.check_run.head_sha }}).
+          NO modifiques ningún archivo del repositorio. Tu único output permitido es UN
+          comentario de respuesta en este PR con el análisis de abajo (usa \`gh pr comment\`).
 
-            NO modifiques ningún archivo del repositorio. Tu único output permitido es UN
-            comentario publicado en ese PR con el análisis de abajo (usa `gh pr comment`).
+          ## 1. Contexto
+          - Obtén el diff del PR: \`gh pr diff ${PR_NUMBER}\`.
+          - Obtén el detalle del check de SonarQube Cloud (issues flageados: regla, archivo,
+            línea, severidad, tipo) vía:
+            \`gh api repos/${REPO}/check-runs/${CHECK_RUN_ID}\`
+          - Lee CLAUDE.md para entender arquitectura y convenciones del repo.
 
-            ## 1. Contexto
-            - Obtén el diff del PR: `gh pr diff ${{ github.event.check_run.pull_requests[0].number }}`.
-            - Obtén el detalle del check de SonarCloud (issues flageados: regla, archivo,
-              línea, severidad, tipo) vía `gh api` sobre el check run
-              (`gh api repos/${{ github.repository }}/check-runs/${{ github.event.check_run.id }}`)
-              y/o el comentario que el bot de SonarCloud haya dejado en el PR
-              (`gh pr view ${{ github.event.check_run.pull_requests[0].number }} --json comments`).
-            - Lee CLAUDE.md para entender arquitectura y convenciones del repo.
+          ## 2. Qué reportó SonarQube Cloud
+          Resume cada issue: regla, severidad, archivo:línea, y por qué se marcó.
 
-            ## 2. Qué reportó SonarCloud
-            Resume cada issue: regla, severidad, archivo:línea, y por qué Sonar lo marcó.
+          ## 3. Análisis de blast radius
+          Para cada issue evalúa:
+          - Qué tan aislado o central es el código afectado (ej. variable local sin uso
+            vs. lógica de negocio compartida).
+          - Qué otras funciones/módulos dependen de ese código (busca callers, imports, usos).
+          - Si existen tests que cubran ese comportamiento.
+          - Clasifica el blast radius como BAJO / MEDIO / ALTO, con la justificación.
 
-            ## 3. Análisis de blast radius
-            Para cada issue evalúa:
-            - Qué tan aislado o central es el código afectado (ej. variable local sin uso
-              vs. lógica de negocio compartida).
-            - Qué otras funciones/módulos dependen de ese código (busca callers, imports, usos).
-            - Si existen tests que cubran ese comportamiento.
-            - Clasifica el blast radius como BAJO / MEDIO / ALTO, con la justificación.
+          ## 4. Recomendación
+          Para cada issue: ¿es seguro auto-resolverlo (BAJO blast radius, sin lógica de
+          negocio involucrada) o requiere revisión humana (MEDIO/ALTO)? Justifica.
 
-            ## 4. Recomendación
-            Para cada issue: ¿es seguro auto-resolverlo (BAJO blast radius, sin lógica de
-            negocio involucrada) o requiere revisión humana (MEDIO/ALTO)? Justifica.
-
-            Publica el análisis completo como comentario en el PR usando `gh pr comment
-            ${{ github.event.check_run.pull_requests[0].number }} --body "..."`. No hagas
-            ningún otro cambio.
+          Publica el análisis completo como UN comentario en este PR. No hagas ningún
+          otro cambio.
+          EOF
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/sonar-analysis-request.md
